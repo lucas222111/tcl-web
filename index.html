@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>TinyCore WebVM | Browser Linux &amp; Wine Sandbox</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script
+    defer
+    src="https://cdn.jsdelivr.net/npm/v86@0.5.476/build/libv86.js"
+    integrity="sha384-o0ZaFFIio1b3xhYt5/5X/wfS1E34KdnaB0hx1XqDZ9VI2iZ3XLHWTTmvKWd+0dgt"
+    crossorigin="anonymous"
+  ></script>
+  <script type="module" src="./src/app.js"></script>
+</head>
+<body>
+  <a href="#main-heading" class="skip-link visually-hidden">Skip to main workspace</a>
+
+  <div class="visually-hidden" aria-live="polite" aria-atomic="true" id="status-announcer"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" aria-hidden="true" viewBox="0 0 24 24" width="24" height="24">
+        <rect x="2" y="3" width="20" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+        <path d="M8 21h8M12 17v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        <path d="M7 9l3 2.5L7 14M12 14h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+      </svg>
+      <div>
+        <span class="brand-name">TinyCore WebVM</span>
+        <span class="brand-sub">x86 Wasm PC + OPFS Disk + Wine Bridge</span>
+      </div>
+    </div>
+
+    <div class="status-pills" aria-label="Virtual machine telemetry">
+      <span class="pill" id="vm-state-pill" data-state="idle">Idle</span>
+      <span class="pill pill-muted" id="storage-backend-pill">Storage: checking…</span>
+      <span class="pill pill-muted" id="disk-sync-pill">Disk: uninitialized</span>
+    </div>
+
+    <div class="topbar-actions">
+      <button type="button" class="btn btn-primary" id="btn-boot">Boot Tiny Core</button>
+      <button type="button" class="btn" id="btn-pause" disabled>Pause</button>
+      <button type="button" class="btn" id="btn-restart" disabled>Restart</button>
+      <button type="button" class="btn" id="btn-save-snapshot" disabled>Save Snapshot</button>
+      <button type="button" class="btn" id="btn-restore-snapshot" disabled>Restore Snapshot</button>
+      <button type="button" class="btn" id="btn-settings">Settings</button>
+      <button type="button" class="btn" id="btn-guide">Wine &amp; 64-bit Info</button>
+    </div>
+  </header>
+
+  <div class="banner-warn" id="file-protocol-warning" hidden role="alert">
+    <strong>Local file:// URL detected:</strong> Browser storage APIs (OPFS, Cache API, Service Worker) and ES modules require serving over HTTP(S) (for example <code>python -m http.server</code> or any web host link).
+  </div>
+
+  <div class="workspace">
+    <main class="stage-panel">
+      <div class="stage-header">
+        <div>
+          <h1 id="main-heading" tabindex="-1">Virtual PC Display</h1>
+          <p class="stage-hint" id="pointer-hint">
+            Use <strong>Capture Mouse</strong> for pointer lock (<kbd>Esc</kbd> releases), or click the terminal icon on the dock to run commands.
+          </p>
+        </div>
+        <div class="stage-controls">
+          <label for="scale-select" class="inline-label">Scale</label>
+          <select id="scale-select">
+            <option value="1" selected>1x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2x</option>
+          </select>
+          <button type="button" class="btn" id="btn-lock-mouse" disabled>Capture Mouse</button>
+          <button type="button" class="btn" id="btn-cad" disabled>Ctrl+Alt+Del</button>
+          <button type="button" class="btn" id="btn-fullscreen" disabled>Fullscreen</button>
+        </div>
+      </div>
+
+      <section class="screen-frame" aria-label="Emulated PC screen">
+        <div id="screen_container" class="v86-screen">
+          <div class="vga-text-layer"></div>
+          <canvas class="vga-canvas-layer" style="display: none;"></canvas>
+        </div>
+
+        <div class="boot-overlay" id="boot-overlay">
+          <div class="boot-card">
+            <h2>Ready to Boot Tiny Core Linux 11.0</h2>
+            <p id="boot-status-text">
+              Downloads Tiny Core (~19 MB) and v86 Wasm once, caches them locally in browser storage, and attaches a persistent ext2 hard drive (<code>/dev/sda1</code>).
+            </p>
+            <label for="boot-progress" class="visually-hidden">Boot and download progress</label>
+            <progress id="boot-progress" max="100" value="0" hidden></progress>
+            <div class="boot-actions">
+              <button type="button" class="btn btn-primary" id="btn-overlay-boot">Start Emulated PC</button>
+              <button type="button" class="btn" id="btn-overlay-restore" hidden>Resume Saved Snapshot</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="macro-bar" aria-label="Guest terminal actions">
+        <div class="macro-buttons">
+          <span class="macro-label">Quick Guest Commands:</span>
+          <button type="button" class="btn btn-sm macro-btn" data-cmd="mountpoint -q /mnt/sda1 || (sudo mkdir -p /mnt/sda1 && sudo mount /dev/sda1 /mnt/sda1); ls -la /mnt/sda1/apps" disabled>Mount Disk</button>
+          <button type="button" class="btn btn-sm macro-btn" data-cmd="sh /mnt/sda1/apps/net-check.sh" disabled>Check Network</button>
+          <button type="button" class="btn btn-sm macro-btn" data-cmd="sh /mnt/sda1/apps/install-wine.sh" disabled>Install Wine (32-bit)</button>
+          <button type="button" class="btn btn-sm macro-btn" data-cmd="sh /mnt/sda1/apps/run-win.sh" disabled>List / Run .exe</button>
+        </div>
+        <form class="cmd-form" id="cmd-form">
+          <label for="guest-cmd-input" class="visually-hidden">Send text command to guest OS keyboard</label>
+          <input
+            type="text"
+            id="guest-cmd-input"
+            placeholder="Focus guest terminal in VM, then type command to send…"
+            autocomplete="off"
+            disabled
+          >
+          <button type="submit" class="btn btn-sm" id="btn-send-cmd" disabled>Send + Enter</button>
+        </form>
+      </section>
+
+      <section class="activity-log-wrap" aria-label="Host activity log">
+        <div class="section-head">
+          <h2>System &amp; Storage Log</h2>
+          <button type="button" class="btn btn-sm" id="btn-clear-log">Clear</button>
+        </div>
+        <pre id="activity-log" class="activity-log" role="region" aria-label="Activity log output" tabindex="0"><code>Initializing browser storage check…</code></pre>
+      </section>
+    </main>
+
+    <aside class="sidebar" aria-label="Local PC storage and Windows file bridge">
+      <section class="card">
+        <div class="section-head">
+          <h2>Browser PC Storage</h2>
+          <button type="button" class="btn btn-sm btn-danger" id="btn-open-reset">Reset Disk</button>
+        </div>
+        <dl class="kv-list">
+          <div>
+            <dt>Quota Usage</dt>
+            <dd id="quota-usage-text">Checking…</dd>
+          </div>
+          <div>
+            <dt>Persistence</dt>
+            <dd id="persist-status-text">Checking…</dd>
+          </div>
+          <div>
+            <dt>Virtual Drive (hda)</dt>
+            <dd id="disk-meta-text">Not formatted yet</dd>
+          </div>
+          <div>
+            <dt>Cached ISO &amp; ROMs</dt>
+            <dd id="cache-meta-text">Not cached yet</dd>
+          </div>
+        </dl>
+        <div class="card-actions">
+          <button type="button" class="btn btn-sm" id="btn-sync-disk" disabled>Save Disk Now</button>
+          <button type="button" class="btn btn-sm" id="btn-export-disk" disabled>Export .img</button>
+          <button type="button" class="btn btn-sm" id="btn-import-disk">Import .img</button>
+          <input type="file" id="import-disk-input" accept=".img,.raw,.bin" hidden>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Windows &amp; TCZ File Bridge</h2>
+          <button type="button" class="btn btn-sm" id="btn-refresh-files">Refresh</button>
+        </div>
+        <p class="card-note">
+          Drop <strong>32-bit Windows <code>.exe</code></strong> files or Tiny Core <strong><code>.tcz</code></strong> extensions to inject into the persistent ext2 hard drive (<code>/mnt/sda1</code>).
+        </p>
+
+        <div class="dropzone" id="file-dropzone">
+          <p>Drop <code>.exe</code>, <code>.msi</code>, <code>.zip</code>, or <code>.tcz</code> files here</p>
+          <div class="dropzone-controls">
+            <label for="inject-target-dir" class="inline-label">Target folder</label>
+            <select id="inject-target-dir">
+              <option value="/apps">/apps (Windows binaries &amp; scripts)</option>
+              <option value="/tce/optional">/tce/optional (Tiny Core packages)</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-primary" id="btn-choose-files">Choose Files</button>
+            <input type="file" id="inject-file-input" multiple hidden>
+          </div>
+        </div>
+
+        <p class="mount-warning" id="live-disk-warning" hidden>
+          VM is running: stop or pause the VM before injecting or deleting ext2 files to avoid Linux filesystem cache conflicts.
+          <button type="button" class="btn btn-sm" id="btn-stop-to-edit">Stop VM to Edit Disk</button>
+        </p>
+
+        <div class="file-browser">
+          <div class="folder-tabs" role="group" aria-label="Virtual disk folders">
+            <button type="button" class="btn btn-sm tab-btn" data-folder="/apps" aria-pressed="true">/apps</button>
+            <button type="button" class="btn btn-sm tab-btn" data-folder="/tce/optional" aria-pressed="false">/tce/optional</button>
+          </div>
+          <ul id="disk-file-list" class="file-list" aria-live="off"></ul>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <footer class="footer">
+    <p>
+      Client-side x86 emulation powered by <a href="https://github.com/copy/v86" target="_blank" rel="noopener noreferrer">v86</a> &amp; <a href="http://tinycorelinux.net/" target="_blank" rel="noopener noreferrer">Tiny Core Linux</a>. All virtual disk &amp; cache data remains locally inside your browser.
+    </p>
+  </footer>
+
+  <!-- Settings Modal -->
+  <dialog id="settings-dialog" aria-labelledby="settings-title" closedby="any">
+    <div class="dialog-header">
+      <h1 id="settings-title">VM Hardware &amp; Storage Settings</h1>
+      <button type="button" class="btn btn-sm" id="btn-close-settings" aria-label="Close settings">Close</button>
+    </div>
+    <form method="dialog" class="dialog-body" id="settings-form">
+      <div class="field">
+        <label for="ram-select">Guest RAM (Browser Memory)</label>
+        <select id="ram-select" autofocus>
+          <option value="256">256 MB (Lightweight)</option>
+          <option value="512" selected>512 MB (Recommended for Wine)</option>
+          <option value="768">768 MB (Extra headroom)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="disk-size-select">New Virtual Disk Size (used on Reset/Create)</label>
+        <select id="disk-size-select">
+          <option value="128">128 MB (Fast &amp; minimal)</option>
+          <option value="384" selected>384 MB (Fits Wine + 124 TCZ deps)</option>
+          <option value="512">512 MB (Large app workspace)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="net-relay-select">Guest Network Backend</label>
+        <select id="net-relay-select">
+          <option value="wisps://wisp.mercurywork.shop/v86/" selected>Wisp Relay (wisp.mercurywork.shop)</option>
+          <option value="wss://relay.widgetry.org/">WebSocket Proxy (relay.widgetry.org)</option>
+          <option value="fetch">Browser Fetch Backend (CORS-limited)</option>
+          <option value="">Disabled (Offline)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="nic-type-select">Emulated Network Card</label>
+        <select id="nic-type-select">
+          <option value="ne2k" selected>NE2000 PCI (Tiny Core 11.0 default)</option>
+          <option value="virtio">VirtIO Net</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="custom-iso-input">Optional Custom Boot ISO (cached in OPFS/IndexedDB)</label>
+        <input type="file" id="custom-iso-input" accept=".iso,.img">
+        <p class="field-help" id="custom-iso-status">Using built-in TinyCore-11.0.iso (~19 MB).</p>
+        <button type="button" class="btn btn-sm" id="btn-clear-custom-iso" hidden>Revert to TinyCore-11.0.iso</button>
+      </div>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel" class="btn">Cancel</button>
+        <button type="submit" value="save" class="btn btn-primary">Apply Settings</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Architecture & Wine Compatibility Guide Modal -->
+  <dialog id="guide-dialog" aria-labelledby="guide-title" closedby="any">
+    <div class="dialog-header">
+      <h1 id="guide-title">Architecture, Wine &amp; 64-bit Compatibility</h1>
+      <button type="button" class="btn btn-sm" id="btn-close-guide" aria-label="Close guide">Close</button>
+    </div>
+    <div class="dialog-body prose">
+      <h2>What this environment runs</h2>
+      <ul>
+        <li><strong>Emulated CPU:</strong> 32-bit x86 (Pentium 4 / SSE3 class via <code>v86</code> WebAssembly JIT).</li>
+        <li><strong>Operating System:</strong> Real <strong>Tiny Core Linux 11.0</strong> (32-bit), cached locally in your browser's OPFS / Cache API after first boot.</li>
+        <li><strong>Local PC Storage:</strong> A real MBR + <code>ext2</code> virtual hard disk (<code>/dev/sda1</code>) and optional VM RAM snapshots persisted in your browser's OPFS / IndexedDB.</li>
+      </ul>
+
+      <h2>Can it run 64-bit Windows 10/11 applications?</h2>
+      <p>
+        <strong>No.</strong> Because <code>v86</code> emulates a <strong>32-bit x86</strong> processor, Tiny Core 11.0 + Wine 5.0.1 here can only execute <strong>32-bit (x86) and 16-bit</strong> Windows programs—not 64-bit (<code>x86_64</code>) Windows 10/11 binaries.
+      </p>
+      <p>
+        Installing Wine inside Tiny Core (<code>tce-load -wi wine</code>) fetches 124 extension packages (~160.7 MB total) onto <code>/mnt/sda1/tce/optional/</code>. Performance inside software x86 emulation is best suited for lightweight utilities, CLI tools, and classic Win32 programs rather than heavy 3D/DirectX software.
+      </p>
+
+      <h2>Quick Wine Steps Inside Tiny Core</h2>
+      <ol>
+        <li>Boot Tiny Core Linux and click the <strong>Terminal (aterm)</strong> icon on the bottom dock.</li>
+        <li>Click <strong>Mount Disk</strong> (or run <code>sudo mount /dev/sda1 /mnt/sda1</code>).</li>
+        <li>Click <strong>Check Network</strong> (<code>sh /mnt/sda1/apps/net-check.sh</code>) to verify DHCP via the selected relay.</li>
+        <li>Click <strong>Install Wine (32-bit)</strong> (<code>sh /mnt/sda1/apps/install-wine.sh</code>) — once installed onto <code>/mnt/sda1</code>, save a <strong>Snapshot</strong> so future visits resume with Wine ready.</li>
+        <li>Upload a 32-bit <code>.exe</code> in the File Bridge and click <strong>Run in Wine</strong> (or run <code>sh /mnt/sda1/apps/run-win.sh /mnt/sda1/apps/yourapp.exe</code>).</li>
+      </ol>
+      <form method="dialog" class="dialog-actions">
+        <button type="submit" value="close" class="btn btn-primary" autofocus>Got it</button>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Destructive Reset Confirmation Modal -->
+  <dialog id="reset-dialog" aria-labelledby="reset-title">
+    <div class="dialog-header">
+      <h1 id="reset-title">Reset Virtual Disk &amp; Browser Storage?</h1>
+    </div>
+    <form method="dialog" class="dialog-body">
+      <p>
+        This will stop the VM (if running), delete your saved ext2 hard drive (<code>/dev/sda1</code>) and any saved RAM snapshot, and format a fresh virtual disk in browser storage.
+      </p>
+      <label class="checkbox-row">
+        <input type="checkbox" id="reset-clear-cache">
+        <span>Also delete cached ISO &amp; Wasm files (forces fresh ~19 MB download)</span>
+      </label>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel" class="btn" autofocus>Cancel</button>
+        <button type="submit" value="confirm" class="btn btn-danger">Delete &amp; Reformat</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
